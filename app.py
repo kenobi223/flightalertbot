@@ -548,12 +548,29 @@ def api_check():
 
 @app_flask.route("/webhook/<token>", methods=["POST"])
 def webhook(token):
+    global application, scheduler
     if not BOT_TOKEN or token != BOT_TOKEN: return "invalid token", 403
+    # lazy init se application è None (gunicorn non ha inizializzato)
     if application is None:
-        return "bot not initialized", 500
+        try:
+            log.info("Lazy init bot in webhook...")
+            application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+            _setup_handlers(application)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(application.initialize())
+            loop.run_until_complete(application.start())
+            if scheduler is None:
+                scheduler = BackgroundScheduler()
+                scheduler.add_job(lambda: asyncio.run(check_all_alerts(application)), 'interval', minutes=CHECK_INTERVAL_MIN, id="check_flights", replace_existing=True)
+                scheduler.start()
+                log.info("Scheduler lazy avviato")
+            log.info("Bot lazy inizializzato")
+        except Exception as e:
+            log.error(f"Lazy init fallita: {e}", exc_info=True)
+            return f"lazy init error {e}", 500
     try:
         update = Update.de_json(request.get_json(force=True), application.bot)
-        # usa nuovo loop per evitare Already running
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(application.process_update(update))
@@ -562,6 +579,10 @@ def webhook(token):
     except Exception as e:
         log.error(f"webhook error {e}", exc_info=True)
         return f"error {e}", 500
+
+@app_flask.route("/debug", methods=["GET"])
+def debug():
+    return jsonify({"bot_token_set": bool(BOT_TOKEN), "application": str(application is not None), "scheduler": str(scheduler is not None), "port": PORT, "webhook_url": WEBHOOK_URL})
 
 @app_flask.route("/webhook/set", methods=["GET"])
 def set_webhook():
