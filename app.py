@@ -446,12 +446,22 @@ def health():
     alerts=load_alerts()
     return jsonify({"status":"ok","bot":"FlightAlertBot","alerts_total":len(alerts),"active":len([a for a in alerts if a["active"]]),"mock":MOCK_MODE,"check_interval_min":CHECK_INTERVAL_MIN, "time": datetime.datetime.now().isoformat()})
 
-@app_flask.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    if not BOT_TOKEN: return "no token", 500
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
-    return "ok"
+@app_flask.route("/webhook/<token>", methods=["POST"])
+def webhook(token):
+    if not BOT_TOKEN or token != BOT_TOKEN: return "invalid token", 403
+    if application is None:
+        return "bot not initialized", 500
+    try:
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        # usa nuovo loop per evitare Already running
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
+        loop.close()
+        return "ok"
+    except Exception as e:
+        log.error(f"webhook error {e}", exc_info=True)
+        return f"error {e}", 500
 
 @app_flask.route("/webhook/set", methods=["GET"])
 def set_webhook():
@@ -493,25 +503,7 @@ def main():
         app_flask.run(host="0.0.0.0", port=PORT)
         return
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-    # handlers
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("alert", alert_start)],
-        states={
-            DEPARTURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_departure)],
-            DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_destination)],
-            MONTHS: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_months)],
-            DURATIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_durations)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_price)],
-        },
-        fallbacks=[CommandHandler("cancel", alert_cancel)],
-        allow_reentry=True
-    )
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_cmd))
-    application.add_handler(conv)
-    application.add_handler(CommandHandler("list", list_alerts))
-    application.add_handler(CommandHandler("stop", stop_alert))
-    application.add_handler(CommandHandler("check", check_now))
+    _setup_handlers(application)
 
     # avvia Flask in thread separato se webhook, altrimenti polling
     import threading
@@ -526,6 +518,46 @@ def main():
         threading.Thread(target=run_flask, daemon=True).start()
         log.info("Modalità POLLING (locale)")
         application.run_polling()
+
+def _setup_handlers(app):
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("alert", alert_start)],
+        states={
+            DEPARTURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_departure)],
+            DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_destination)],
+            MONTHS: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_months)],
+            DURATIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_durations)],
+            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, alert_price)],
+        },
+        fallbacks=[CommandHandler("cancel", alert_cancel)],
+        allow_reentry=True
+    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(conv)
+    app.add_handler(CommandHandler("list", list_alerts))
+    app.add_handler(CommandHandler("stop", stop_alert))
+    app.add_handler(CommandHandler("check", check_now))
+
+# --- Init per gunicorn/Render (quando non è __main__) ---
+if BOT_TOKEN and application is None and os.getenv("PORT"):
+    try:
+        log.info("Init gunicorn/Render webhook mode...")
+        application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+        _setup_handlers(application)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.initialize())
+        loop.run_until_complete(application.start())
+        # scheduler
+        if scheduler is None:
+            scheduler = BackgroundScheduler()
+            scheduler.add_job(lambda: asyncio.run(check_all_alerts(application)), 'interval', minutes=CHECK_INTERVAL_MIN, id="check_flights", replace_existing=True)
+            scheduler.start()
+            log.info(f"Scheduler gunicorn avviato ogni {CHECK_INTERVAL_MIN} min")
+        log.info("Bot inizializzato per gunicorn")
+    except Exception as e:
+        log.error(f"Init gunicorn fallita: {e}", exc_info=True)
 
 if __name__=="__main__":
     main()
