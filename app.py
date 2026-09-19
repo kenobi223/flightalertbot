@@ -30,6 +30,8 @@ MOCK_MODE = os.getenv("MOCK_MODE", "true").lower() == "true"  # true = prezzi fa
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 AMADEUS_KEY = os.getenv("AMADEUS_API_KEY", "")
 AMADEUS_SECRET = os.getenv("AMADEUS_API_SECRET", "")
+KIWI_API_KEY = os.getenv("KIWI_API_KEY", "")  # Tequila by Kiwi.com - gratis 500/mese, copre Ryanair/Wizz/ITA/Emirates
+RYANAIR_DIRECT = os.getenv("RYANAIR_DIRECT", "true").lower() == "true"  # usa API Ryanair diretta senza key (services-api.ryanair.com)
 
 # Stati conversazione
 DEPARTURE, DESTINATION, MONTHS, DURATIONS, PRICE = range(5)
@@ -171,8 +173,66 @@ def build_links(dep, dest, d1, d2):
         "kayak": f"https://www.kayak.it/flights/{dep_i}-{dest_i}/{d1s}/{d2s}"
     }
 
+def search_kiwi(dep, dest, d1, d2):
+    """Kiwi Tequila - gratis, copre Ryanair/Wizz/ITA/Emirates + low-cost. Richiede KIWI_API_KEY."""
+    if not KIWI_API_KEY:
+        return None, None
+    try:
+        dep_i=normalize_city(dep)["iata"]; dest_i=normalize_city(dest)["iata"]
+        url="https://api.tequila.kiwi.com/v2/search"
+        headers={"apikey": KIWI_API_KEY}
+        params={
+            "fly_from": dep_i, "fly_to": dest_i,
+            "date_from": d1.strftime("%d/%m/%Y"), "date_to": d1.strftime("%d/%m/%Y"),
+            "return_from": d2.strftime("%d/%m/%Y"), "return_to": d2.strftime("%d/%m/%Y"),
+            "curr": "EUR", "limit": 3, "sort": "price", "adults": 1
+        }
+        r=requests.get(url, headers=headers, params=params, timeout=15)
+        data=r.json()
+        if data.get("data"):
+            price=int(float(data["data"][0]["price"]))
+            return price, "kiwi"
+    except Exception as e:
+        log.warning(f"Kiwi error {e}")
+    return None, None
+
+def search_ryanair_direct(dep, dest, d1, d2):
+    """Ryanair diretta senza key - services-api.ryanair.com (sicura, ufficiale). Solo se RYANAIR_DIRECT=true e rotta Ryanair."""
+    if not RYANAIR_DIRECT:
+        return None, None
+    try:
+        dep_i=normalize_city(dep)["iata"]; dest_i=normalize_city(dest)["iata"]
+        # Ryanair farfnd roundTripFares - cerca voli diretti Ryanair
+        url="https://services-api.ryanair.com/farfnd/3/roundTripFares"
+        params={
+            "departureAirportIataCode": dep_i, "arrivalAirportIataCode": dest_i,
+            "outboundDepartureDateFrom": d1.strftime("%Y-%m-%d"), "outboundDepartureDateTo": d1.strftime("%Y-%m-%d"),
+            "inboundDepartureDateFrom": d2.strftime("%Y-%m-%d"), "inboundDepartureDateTo": d2.strftime("%Y-%m-%d"),
+            "language": "en", "market": "en-gb", "limit": 5
+        }
+        r=requests.get(url, params=params, timeout=10, headers={"User-Agent":"FlightAlertBot/1.0"})
+        if r.status_code==200:
+            data=r.json()
+            fares=data.get("fares",[])
+            if fares:
+                # prendi prezzo più basso (outbound+inbound)
+                best=min(fares, key=lambda x: x.get("summary",{}).get("price",{}).get("value",9999))
+                price=best["summary"]["price"]["value"]
+                return int(price), "ryanair"
+    except Exception as e:
+        log.debug(f"Ryanair direct no fare {e}")
+    return None, None
+
 def search_price_real(dep, dest, d1, d2):
-    """Prova API reali se chiavi presenti, altrimenti mock"""
+    """Prova API reali in ordine: Kiwi (Ryanair/Wizz) -> Ryanair diretta -> SerpApi -> Amadeus -> mock"""
+    # 1. Prova Kiwi e Ryanair anche in MOCK_MODE se chiavi presenti (per low-cost gratis)
+    if KIWI_API_KEY:
+        price, src = search_kiwi(dep, dest, d1, d2)
+        if price: return price, src
+    if RYANAIR_DIRECT:
+        price, src = search_ryanair_direct(dep, dest, d1, d2)
+        if price: return price, src
+
     if MOCK_MODE:
         # Mock: prezzo random 70-380, con 25% chance di scendere sotto soglia per demo
         base_dep=normalize_city(dep); base_dest=normalize_city(dest)
