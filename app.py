@@ -32,6 +32,7 @@ AMADEUS_KEY = os.getenv("AMADEUS_API_KEY", "")
 AMADEUS_SECRET = os.getenv("AMADEUS_API_SECRET", "")
 KIWI_API_KEY = os.getenv("KIWI_API_KEY", "")  # Tequila by Kiwi.com - gratis 500/mese, copre Ryanair/Wizz/ITA/Emirates
 RYANAIR_DIRECT = os.getenv("RYANAIR_DIRECT", "true").lower() == "true"  # usa API Ryanair diretta senza key (services-api.ryanair.com)
+FAST_FLIGHTS = os.getenv("FAST_FLIGHTS", "true").lower() == "true"  # AWeirdDev/flights - Google Flights scraper gratis, copre tutte le compagnie senza API key
 
 # Stati conversazione
 DEPARTURE, DESTINATION, MONTHS, DURATIONS, PRICE = range(5)
@@ -223,9 +224,60 @@ def search_ryanair_direct(dep, dest, d1, d2):
         log.debug(f"Ryanair direct no fare {e}")
     return None, None
 
+def search_fast_flights(dep, dest, d1, d2):
+    """AWeirdDev/flights - Google Flights scraper gratis, veloce, copre Ryanair/Wizz/ITA/Emirates/Italo senza API key"""
+    if not FAST_FLIGHTS:
+        return None, None
+    try:
+        from fast_flights import FlightQuery, Passengers, create_query, get_flights
+        dep_i=normalize_city(dep)["iata"]; dest_i=normalize_city(dest)["iata"]
+        # se IATA non valida (3 lettere), skip
+        if len(dep_i)!=3 or len(dest_i)!=3:
+            return None, None
+        query = create_query(
+            flights=[
+                FlightQuery(date=d1.strftime("%Y-%m-%d"), from_airport=dep_i, to_airport=dest_i),
+                FlightQuery(date=d2.strftime("%Y-%m-%d"), from_airport=dest_i, to_airport=dep_i),
+            ],
+            trip="round-trip",
+            seat="economy",
+            passengers=Passengers(adults=1),
+            currency="EUR",
+            language="en",
+        )
+        res = get_flights(query)
+        # res è ResultList con .flights o lista diretta
+        flights=[]
+        if hasattr(res, 'flights'):
+            flights=res.flights
+        elif isinstance(res, list):
+            flights=res
+        else:
+            flights=list(res) if res else []
+        if flights:
+            # prendi prezzo più basso
+            # ogni flight ha .price (str con €) o .price_value
+            best=min(flights, key=lambda f: float(str(getattr(f,'price','9999')).replace('€','').replace(',','').replace(' ','').strip() or 9999))
+            price_raw=getattr(best,'price','')
+            # estrai numero
+            import re
+            m=re.search(r'[\d,.]+', str(price_raw))
+            if m:
+                price=int(float(m.group(0).replace(',','')))
+                return price, "fast-flights"
+            # fallback: prova attributo price_value
+            if hasattr(best,'price_value'):
+                return int(best.price_value), "fast-flights"
+    except Exception as e:
+        log.debug(f"fast-flights no result {e}")
+    return None, None
+
 def search_price_real(dep, dest, d1, d2):
-    """Prova API reali in ordine: Kiwi (Ryanair/Wizz) -> Ryanair diretta -> SerpApi -> Amadeus -> mock"""
-    # 1. Prova Kiwi e Ryanair anche in MOCK_MODE se chiavi presenti (per low-cost gratis)
+    """Prova API reali in ordine: fast-flights (Google) -> Kiwi (Ryanair/Wizz) -> Ryanair diretta -> SerpApi -> Amadeus -> mock"""
+    # 1. Prova scraper gratis anche in MOCK_MODE (copre tutte le compagnie senza key)
+    if FAST_FLIGHTS:
+        price, src = search_fast_flights(dep, dest, d1, d2)
+        if price: return price, src
     if KIWI_API_KEY:
         price, src = search_kiwi(dep, dest, d1, d2)
         if price: return price, src
