@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FlightAlertBot — Voli sotto prezzo • Notifiche istantanee</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="bg-gradient"></div>
+<div class="bg-grid"></div>
+
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">✈️</div>
+      <div>
+        <div class="logo-text">FlightAlertBot</div>
+        <div class="logo-sub">by ItinerarioPerfetto</div>
+      </div>
+      <span class="badge-live">● LIVE su Render</span>
+    </div>
+    <nav class="nav">
+      <a href="https://t.me/flightsaro_bot" target="_blank" class="nav-link">Telegram Bot ↗</a>
+      <a href="https://github.com/kenobi223/flightalertbot" target="_blank" class="nav-link ghost">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-badge">🚨 Notifiche istantanee • 4 link reali • Render 24/7</div>
+    <h1>Voli sotto prezzo,<br><span class="gradient-text">notifica istantanea.</span></h1>
+    <p class="hero-p">Imposti <b>partenza → destinazione</b>, <b>mesi</b> (maggio, giugno), <b>durate</b> (1,2,3,14 giorni) e <b>prezzo max</b>. Appena un volo scende sotto, ti arriva su <b>Telegram con link reali</b> Google Flights / Skyscanner / KAYAK.</p>
+    <div class="hero-cta">
+      <button id="btnHeroTelegram" class="btn primary large">✈️ Apri su Telegram</button>
+      <button id="btnHeroScroll" class="btn ghost large">Crea alert dal web ↓</button>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><b id="statTotal">0</b><span>alert totali</span></div>
+      <div class="stat"><b id="statActive">0</b><span>attivi</span></div>
+      <div class="stat"><b id="statMock">MOCK</b><span>prezzi demo</span></div>
+    </div>
+  </div>
+  <div class="hero-visual">
+    <div class="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="notif">
+          <div class="notif-icon">🚨</div>
+          <div>
+            <div class="notif-title">PREZZO SOTTO SOGLIA!</div>
+            <div class="notif-text">Milano → Tokyo<br>12/05 → 26/05 (14gg) — <b>238€</b> (soglia 250€)</div>
+            <div class="notif-links">Google Flights • Skyscanner • KAYAK</div>
+          </div>
+        </div>
+        <div class="phone-flight">
+          <div class="flight-route"><span>Milano MXP</span> <span class="flight-arrow">→</span> <span>Tokyo TYO</span></div>
+          <div class="flight-dates">maggio, giugno • 1,2,3,14 giorni</div>
+          <div class="flight-price">≤ 250€</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<main class="main">
+  <div class="grid">
+    <!-- Form -->
+    <section class="card form-card">
+      <div class="card-header">
+        <h2>✨ Crea nuovo alert</h2>
+        <span class="card-hint">Funziona da web e da Telegram Mini App</span>
+      </div>
+      
+      <div id="tgBanner" class="tg-banner hidden">
+        <span>📱 Aperto da Telegram come Mini App — alert collegato al tuo account <b id="tgUser"></b></span>
+      </div>
+
+      <label class="label">🛫 Partenza</label>
+      <select id="departure" class="input">
+        <option value="Milano">Milano (MXP)</option>
+        <option value="Roma">Roma (FCO)</option>
+        <option value="Napoli">Napoli (NAP)</option>
+        <option value="Torino">Torino (TRN)</option>
+        <option value="Venezia">Venezia (VCE)</option>
+        <option value="Bologna">Bologna (BLQ)</option>
+        <option value="Firenze">Firenze (FLR)</option>
+        <option value="Palermo">Palermo (PMO)</option>
+        <option value="Catania">Catania (CTA)</option>
+        <option value="Bari">Bari (BRI)</option>
+        <option value="Tokyo">Tokyo (TYO)</option>
+        <option value="Parigi">Parigi (CDG)</option>
+        <option value="Barcellona">Barcellona (BCN)</option>
+        <option value="New York">New York (JFK)</option>
+        <option value="Londra">Londra (LHR)</option>
+      </select>
+
+      <label class="label">🌍 Destinazione</label>
+      <input id="destination" class="input" placeholder="Es. Tokyo, Parigi, New York, Londra..." list="destList">
+      <datalist id="destList">
+        <option value="Tokyo"><option value="Parigi"><option value="Barcellona"><option value="New York"><option value="Londra"><option value="Roma"><option value="Milano">
+      </datalist>
+
+      <label class="label">📅 Mesi (range tempo)</label>
+      <input id="months" class="input" placeholder="Es. maggio,giugno  oppure  2026-05,2026-06">
+      <div class="hint">Scrivi come <code>maggio,giugno</code> o <code>5,6</code> o <code>2026-05,2026-06</code></div>
+      <div class="months-chips">
+        <button class="chip" data-months="maggio,giugno">maggio, giugno</button>
+        <button class="chip" data-months="luglio,agosto">luglio, agosto</button>
+        <button class="chip" data-months="giugno,agosto">estate 2026</button>
+      </div>
+
+      <label class="label">⏱ Durate (giorni che vuoi stare)</label>
+      <input id="durations" class="input" placeholder="Es. 1,2,3,14  oppure  7-14">
+      <div class="hint">Es. <code>1,2,3,14</code> per 1 o 2 o 3 o 14 giorni, o <code>7</code> solo 7 giorni</div>
+      <div class="months-chips">
+        <button class="chip" data-dur="1,2,3,14">1,2,3,14</button>
+        <button class="chip" data-dur="7">7 giorni</button>
+        <button class="chip" data-dur="14">14 giorni</button>
+        <button class="chip" data-dur="7-14">7-14</button>
+      </div>
+
+      <label class="label">💰 Prezzo max A/R (€)</label>
+      <input id="price" type="number" class="input" placeholder="Es. 150" min="10" max="5000">
+      <div class="hint">Ti notifico quando trovo volo A/R ≤ questo prezzo</div>
+
+      <label class="label">📱 Telegram per notifiche (opzionale da web)</label>
+      <input id="tgUsername" class="input" placeholder="Es. @tuonome o ID numerico (se vuoto, notifica solo su web)">
+      <div class="hint">Se usi la Mini App Telegram, è automatico. Da web, scrivi il tuo @username e avvia <b>@flightsaro_bot</b> con /start</div>
+
+      <button id="btnCreate" class="btn primary large full">🚨 Crea alert e attiva notifiche</button>
+      <div id="formMsg" class="form-msg"></div>
+    </section>
+
+    <!-- Alerts list -->
+    <section class="card list-card">
+      <div class="card-header">
+        <h2>📋 I tuoi alert</h2>
+        <div class="card-actions">
+          <button id="btnRefresh" class="btn small">🔄 Aggiorna</button>
+          <button id="btnCheck" class="btn small ghost">⚡ Check ora</button>
+        </div>
+      </div>
+      <div class="filter-row">
+        <input id="search" class="input small" placeholder="Filtra per destinazione...">
+      </div>
+      <div id="alertsList" class="alerts-list">
+        <div class="empty">Nessun alert — creane uno a sinistra 👈<br><span class="hint">Oppure usa Telegram: @flightsaro_bot → /alert</span></div>
+      </div>
+      <div class="card-footer">
+        <span class="hint">Dati salvati su Render • Check ogni 30 min • <a href="/api/health" target="_blank">API health</a></span>
+      </div>
+    </section>
+  </div>
+
+  <section class="card how-card">
+    <h3>Come funziona (Wanderlog + voli reali)</h3>
+    <div class="how-grid">
+      <div class="how-item"><span class="how-num">1</span><div><b>Imposti range</b><br><span class="hint">Mesi + durate, es. maggio-giugno per 3 o 14 giorni</span></div></div>
+      <div class="how-item"><span class="how-num">2</span><div><b>Bot controlla ogni 30 min</b><br><span class="hint">Su Render 24/7, campiona date 5/12/19/26 di ogni mese</span></div></div>
+      <div class="how-item"><span class="how-num">3</span><div><b>Notifica istantanea</b><br><span class="hint">Appena prezzo ≤ soglia → Telegram con 4 link reali Google/Skyscanner/KAYAK</span></div></div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span>FlightAlertBot • <a href="https://github.com/kenobi223/flightalertbot" target="_blank">GitHub</a> • <a href="https://t.me/flightsaro_bot" target="_blank">@flightsaro_bot</a> • Render • MOCK demo / API reali con SERPAPI_KEY</span>
+</footer>
+
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

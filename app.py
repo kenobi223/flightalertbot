@@ -13,7 +13,7 @@ import datetime
 import random
 import urllib.parse
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, CallbackQueryHandler, ContextTypes, filters
@@ -438,13 +438,113 @@ async def check_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await check_all_alerts(context.application)
     await update.message.reply_text("✅ Controllo completato. Se c'era prezzo sotto soglia hai ricevuto notifica.")
 
-# --- Flask + Webhook ---
-app_flask = Flask(__name__)
+# --- Flask + Web + Webhook ---
+app_flask = Flask(__name__, template_folder="templates", static_folder="static")
 
 @app_flask.route("/", methods=["GET"])
+def web_index():
+    return render_template("index.html")
+
+@app_flask.route("/miniapp", methods=["GET"])
+def miniapp():
+    return render_template("index.html")
+
+@app_flask.route("/api/health", methods=["GET"])
 def health():
     alerts=load_alerts()
     return jsonify({"status":"ok","bot":"FlightAlertBot","alerts_total":len(alerts),"active":len([a for a in alerts if a["active"]]),"mock":MOCK_MODE,"check_interval_min":CHECK_INTERVAL_MIN, "time": datetime.datetime.now().isoformat()})
+
+@app_flask.route("/api/alerts", methods=["GET"])
+def api_list_alerts():
+    user_id=request.args.get("user_id", "")
+    tg=request.args.get("tg","")
+    alerts=load_alerts()
+    # se user_id fornito, filtra per quell'utente + mostra anche alert web con stesso tg username
+    if user_id:
+        # mostra alert di quell'utente + alert web recenti (ultimi 20) per demo
+        filtered=[a for a in alerts if str(a.get("user_id"))==str(user_id) or (tg and a.get("tg_username")==tg)]
+        # per web, mostra anche ultimi 20 globali se pochi
+        if len(filtered)<3 and user_id.startswith("web_"):
+            filtered=alerts[-20:]
+        return jsonify({"alerts": filtered[-50:]})
+    return jsonify({"alerts": alerts[-50:]})
+
+@app_flask.route("/api/alerts", methods=["POST"])
+def api_create_alert():
+    try:
+        data=request.get_json(force=True)
+        departure=data.get("departure","").strip()
+        destination=data.get("destination","").strip()
+        months_raw=data.get("months","").strip()
+        durs_raw=data.get("durations","").strip()
+        max_price=int(data.get("max_price",0))
+        user_id=data.get("user_id") or f"web_{request.remote_addr}"
+        tg_username=data.get("tg_username","").strip()
+        months=parse_months(months_raw)
+        durs=parse_durations(durs_raw)
+        if not departure or not destination or not months or not durs or not max_price:
+            return jsonify({"ok":False,"error":"Compila tutti i campi correttamente"}),400
+        # se tg_username è @username, prova a risolvere user_id esistente con stesso username
+        # cerca alert esistente con stesso username per riutilizzare user_id Telegram
+        if tg_username:
+            # cerca tra alert esistenti un user_id numerico con stesso username
+            for a in load_alerts():
+                if a.get("username") and tg_username.replace("@","").lower() in str(a.get("username")).lower():
+                    user_id=a["user_id"]
+                    break
+        # se initData contiene user, usa quell'ID
+        # fallback: se tg WebApp, prova a estrarre da header
+        alert=add_alert(user_id, tg_username or str(user_id), departure, destination, months, durs, max_price)
+        # salva tg_username per lookup futuro
+        if tg_username:
+            alerts=load_alerts()
+            for a in alerts:
+                if a["id"]==alert["id"]:
+                    a["tg_username"]=tg_username
+                    break
+            save_alerts(alerts)
+            alert["tg_username"]=tg_username
+        return jsonify({"ok":True,"alert": alert})
+    except Exception as e:
+        log.error(f"api create error {e}", exc_info=True)
+        return jsonify({"ok":False,"error":str(e)}),500
+
+@app_flask.route("/api/alerts/<int:alert_id>", methods=["DELETE"])
+def api_delete_alert(alert_id):
+    try:
+        data=request.get_json(force=True) or {}
+        user_id=data.get("user_id","")
+        alerts=load_alerts()
+        for a in alerts:
+            if a["id"]==alert_id:
+                # permette delete se user_id matcha o se web_ (per demo)
+                if str(a.get("user_id"))==str(user_id) or str(user_id).startswith("web_"):
+                    a["active"]=False
+                    save_alerts(alerts)
+                    return jsonify({"ok":True})
+                else:
+                    return jsonify({"ok":False,"error":"Non autorizzato"}),403
+        return jsonify({"ok":False,"error":"Alert non trovato"}),404
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
+
+@app_flask.route("/api/check", methods=["POST"])
+def api_check():
+    try:
+        data=request.get_json(silent=True) or {}
+        alert_id=data.get("alert_id")
+        # avvia check in background thread
+        import threading
+        def do_check():
+            loop=asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            if application and application.bot:
+                loop.run_until_complete(check_all_alerts(application))
+            loop.close()
+        threading.Thread(target=do_check, daemon=True).start()
+        return jsonify({"ok":True,"msg":"Check avviato"})
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
 
 @app_flask.route("/webhook/<token>", methods=["POST"])
 def webhook(token):
