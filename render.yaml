@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: flightalertbot
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app_flask --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    # Per bot con webhook + scheduler, gunicorn avvia Flask; il bot polling è gestito via webhook route
+    # In alternativa per polling puro, usa: python app.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: MOCK_MODE
+        value: "true"
+      - key: CHECK_INTERVAL_MIN
+        value: "30"
+      - key: SERPAPI_KEY
+        sync: false
+      - key: AMADEUS_API_KEY
+        sync: false
+      - key: AMADEUS_API_SECRET
+        sync: false
+    healthCheckPath: /
+    autoDeploy: true
